@@ -109,16 +109,16 @@ options.add_experimental_option('useAutomationExtension', False)
 try:
 
     # driver = uc.Chrome(options=options, service=Service(executable_path="C:\Users\user\Downloads\chromedriver-win64\chromedriver-win64\chromedriver.exe"))
-    driver = uc.Chrome(
-        options=options,
-        service=Service(
-            executable_path=r"C:\Users\user\Downloads\chromedriver-win64\chromedriver-win64\chromedriver.exe"
-        )
-    )
-
-    # driver = webdriver.Chrome(
-    #     options=options, service=Service(ChromeDriverManager().install())
+    # driver = uc.Chrome(
+    #     options=options,
+    #     service=Service(
+    #         executable_path=r"C:\Users\user\Downloads\chromedriver-win64\chromedriver-win64\chromedriver.exe"
+    #     )
     # )
+
+    driver = webdriver.Chrome(
+        options=options, service=Service(ChromeDriverManager().install())
+    )
     driver.maximize_window()
 except Exception as e:
     print(f"Error initializing Chrome driver: {e}")
