@@ -6,9 +6,8 @@ from datetime import datetime
 from urllib.parse import urljoin
 
 from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
-from webdriver_manager.chrome import ChromeDriverManager
+from selenium.webdriver.firefox.service import Service
+from selenium.webdriver.firefox.options import Options
 from selenium.webdriver.common.by import By
 from bs4 import BeautifulSoup as BSoup
 
@@ -16,7 +15,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
 
-import undetected_chromedriver as uc
+import undetected_geckodriver as ug
 
 
 from utils import (
@@ -55,6 +54,13 @@ parser.add_argument(
 )
 parser.set_defaults(save_page_source=False)
 
+parser.add_argument(
+    "--firefox-binary",
+    dest="firefox_binary",
+    type=str,
+    default=None,
+    help="Path to Firefox binary (e.g., /usr/bin/firefox or C:\\Program Files\\Mozilla Firefox\\firefox.exe)",
+)
 
 args = parser.parse_args()
 
@@ -93,29 +99,32 @@ linkedin_username, linkedin_password = login_details()
 start = time()
 print("Initiating the process....")
 
-# Selenium Chrome Driver setup
-options = uc.ChromeOptions()
+# Selenium Firefox Driver setup
+options = Options()
 
 if args.headless:
-    options.add_argument("--headless=new")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--headless")
 
-# Additional options for stability
-options.add_argument("--disable-blink-features=AutomationControlled")
-options.add_experimental_option("excludeSwitches", ["enable-automation"])
-options.add_experimental_option('useAutomationExtension', False)
+# Additional options for stability and stealth
+options.set_preference("dom.webdriver.enabled", False)
+options.set_preference("useAutomationExtension", False)
+options.set_preference("general.useragent.override", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0")
+
+# Set Firefox binary path if provided
+if args.firefox_binary:
+    options.binary_location = args.firefox_binary
+    print(f"Using Firefox binary at: {args.firefox_binary}")
 
 try:
-
-    driver = uc.Chrome(options=options, service=Service(executable_path="C:\Users\user\Downloads\chromedriver-win64\chromedriver-win64\chromedriver.exe"))
-
-    # driver = webdriver.Chrome(
-    #     options=options, service=Service(ChromeDriverManager().install())
-    # )
+    # Use undetected-geckodriver
+    driver = ug.Firefox(options=options)
     driver.maximize_window()
 except Exception as e:
-    print(f"Error initializing Chrome driver: {e}")
+    print(f"Error initializing Firefox driver: {e}")
+    print("\nTroubleshooting tips:")
+    print("1. Install undetected-geckodriver: pip install undetected-geckodriver")
+    print("2. Specify Firefox binary path with --firefox-binary flag")
+    print("3. Example: python script.py --firefox-binary 'C:\\Program Files\\Mozilla Firefox\\firefox.exe'")
     csv_file.close()
     exit(1)
 
