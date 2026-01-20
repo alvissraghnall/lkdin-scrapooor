@@ -16,6 +16,9 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
 
+import undetected_chromedriver as uc
+
+
 from utils import (
     check_post_url,
     login_details,
@@ -91,7 +94,7 @@ start = time()
 print("Initiating the process....")
 
 # Selenium Chrome Driver setup
-options = Options()
+options = uc.ChromeOptions()
 
 if args.headless:
     options.add_argument("--headless=new")
@@ -104,9 +107,12 @@ options.add_experimental_option("excludeSwitches", ["enable-automation"])
 options.add_experimental_option('useAutomationExtension', False)
 
 try:
-    driver = webdriver.Chrome(
-        options=options, service=Service(ChromeDriverManager().install())
-    )
+
+    driver = uc.Chrome(options=options)
+
+    # driver = webdriver.Chrome(
+    #     options=options, service=Service(ChromeDriverManager().install())
+    # )
     driver.maximize_window()
 except Exception as e:
     print(f"Error initializing Chrome driver: {e}")
@@ -120,6 +126,7 @@ try:
     wait = WebDriverWait(driver, 20)
     
     print(f"Current URL: {driver.current_url}")
+    driver.save_screenshot("login_page.png")
     
     # Login process with better error handling
     try:
@@ -134,16 +141,18 @@ try:
         sign_in_button = driver.find_element(By.XPATH, "//button[@type='submit']")
         sign_in_button.click()
         
+        driver.save_screenshot("after_login.png")
         # Wait for login to complete
-        sleep(10)
+        sleep(25)
 
         print(driver.current_url, driver)
         
         # Check if verification is needed
         if "checkpoint" in driver.current_url or "challenge" in driver.current_url:
             print("LinkedIn requires verification. Please complete it manually.")
-            input("Press Enter after completing verification...")
             driver.save_screenshot("requires_verification.png")
+            input("Press Enter after completing verification...")
+            driver.save_screenshot("after_verification.png")
 
         
     except TimeoutException:
@@ -154,14 +163,17 @@ try:
     # Navigate to post
     print(f"Navigating to post: {post_url}")
     driver.get(post_url)
-    sleep(3)  # Wait for page to load
+    sleep(20)  # Wait for page to load
     
     # Load comments
     print("Loading comments:", end=" ", flush=True)
+    driver.save_screenshot("post_page.png")
+
     load_more("comments", Config["load_comments_class"], driver)
     
     if args.show_replies:
         print("\nLoading replies:", end=" ", flush=True)
+        driver.save_screenshot("post_page_replies.png")
         load_more("replies", Config["load_replies_class"], driver)
     
     print("\nExtracting data...")
