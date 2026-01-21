@@ -1,3 +1,8 @@
+"""
+This module provides utility functions for the LinkedIn scrapers.
+It handles checking post URLs, user login details, saving credentials, and downloading avatars.
+"""
+
 import os
 import re
 import sys
@@ -5,12 +10,6 @@ import json
 import urllib.request
 from time import sleep
 from getpass import getpass
-
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.wait import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.common.action_chains import ActionChains
 
 
 """
@@ -71,63 +70,6 @@ def save_credentials(email: str, password: str):
     if choice.lower() == "y":
         with open("credentials.json", "w") as f:
             json.dump({"email": email, "password": password}, f)
-
-
-def load_more(target: str, target_class: str, driver: webdriver.Chrome):
-    webdriver_wait = WebDriverWait(driver, 10)
-    action = ActionChains(driver)
-
-    try:
-        load_more_button = webdriver_wait.until(
-            EC.element_to_be_clickable((By.CLASS_NAME, target_class))
-        )
-    except:
-        print(f"All {target} are displaying already!")
-        return
-
-    print("[", end="", flush=True)
-
-    while True:
-        print("#", end="", flush=True)
-        action.move_to_element(load_more_button).click().perform()
-        sleep(2)
-        try:
-            load_more_button = webdriver_wait.until(
-                EC.element_to_be_clickable((By.CLASS_NAME, target_class))
-            )
-        except:
-            print("]")
-            print(f"All {target} have been displayed!")
-            break
-
-
-def extract_emails(comments: list[str]) -> list[str]:
-    emails = []
-    for comment in comments:
-        email_match = re.findall(r"[\w\.-]+@[\w\.-]+\.\w+", comment)
-        if email_match:
-            emails.append(email_match)
-        else:
-            emails.append("-")
-    return emails
-
-
-def write_data2csv(
-    writer,
-    names: list[str],
-    profile_links: list[str],
-    avatars: list[str],
-    headlines: list[str],
-    emails: list[str],
-    comments: list[str],
-):
-    for name, profile_link, avatar, headline, email, comment in zip(
-        names, profile_links, avatars, headlines, emails, comments
-    ):
-        writer.writerow(
-            [name, profile_link, avatar, headline, email, comment.encode("utf-8")]
-        )
-        # utf-8 encoding helps to deal with emojis
 
 
 def download_avatars(urls: list[str], filenames: list[str], dir_name: str):

@@ -1,3 +1,4 @@
+import re
 import csv
 import json
 import argparse
@@ -10,259 +11,225 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.common.by import By
-from bs4 import BeautifulSoup as BSoup
-
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, NoSuchElementException
+from selenium.common.exceptions import TimeoutException
+from bs4 import BeautifulSoup as BSoup
 
 import undetected_chromedriver as uc
-
 
 from utils import (
     check_post_url,
     login_details,
-    load_more,
-    extract_emails,
     download_avatars,
-    write_data2csv,
 )
 
-parser = argparse.ArgumentParser(description="Linkedin Scraping.")
+def load_all_comments(driver, show_replies=False):
+    """Click 'load more' and 'show replies' buttons until all are loaded."""
+    wait = WebDriverWait(driver, 5)
+    print("Loading comments: ", end="", flush=True)
 
-parser.add_argument(
-    "--headless", dest="headless", action="store_true", help="Go headless browsing"
-)
-parser.set_defaults(headless=False)
-parser.add_argument(
-    "--show-replies", dest="show_replies", action="store_true", help="Load all replies to comments"
-)
-parser.set_defaults(show_replies=False)
-
-parser.add_argument(
-    "--download-pfp",
-    dest="download_avatars",
-    action="store_true",
-    help="Download profile pictures of commentors",
-)
-parser.set_defaults(download_avatars=False)
-
-parser.add_argument(
-    "--save-page-source",
-    dest="save_page_source",
-    action="store_true",
-    help="Save page source for debugging",
-)
-parser.set_defaults(save_page_source=False)
-
-
-args = parser.parse_args()
-
-now = datetime.now()
-unique_suffix = now.strftime("-%m-%d-%Y--%H-%M")
-
-# Load config with error handling
-try:
-    with open("config.json") as f:
-        Config: dict[str, str] = json.load(f)
-except FileNotFoundError:
-    print("Error: config.json not found. Please create a config file.")
-    exit(1)
-except json.JSONDecodeError:
-    print("Error: config.json is not valid JSON.")
-    exit(1)
-
-post_url = check_post_url(Config["post_url"])
-
-# Create CSV writer
-try:
-    csv_file = open(
-        Config["filename"] + unique_suffix + ".csv",
-        "w",
-        encoding="utf-8",
-        newline=""  # Added to prevent blank lines in CSV
-    )
-    writer = csv.writer(csv_file)
-    writer.writerow(["Name", "Profile Link", "Profile Picture", "Headline", "Email", "Comment"])
-except Exception as e:
-    print(f"Error creating CSV file: {e}")
-    exit(1)
-
-linkedin_username, linkedin_password = login_details()
-
-start = time()
-print("Initiating the process....")
-
-# Selenium Chrome Driver setup
-options = uc.ChromeOptions()
-
-if args.headless:
-    options.add_argument("--headless=new")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-
-# Additional options for stability
-options.add_argument("--disable-blink-features=AutomationControlled")
-options.add_experimental_option("excludeSwitches", ["enable-automation"])
-options.add_experimental_option('useAutomationExtension', False)
-
-try:
-
-    # driver = uc.Chrome(options=options, service=Service(executable_path="C:\Users\user\Downloads\chromedriver-win64\chromedriver-win64\chromedriver.exe"))
-    # driver = uc.Chrome(
-    #     options=options,
-    #     service=Service(
-    #         executable_path=r"C:\Users\user\Downloads\chromedriver-win64\chromedriver-win64\chromedriver.exe"
-    #     )
-    # )
-
-    driver = webdriver.Chrome(
-        options=options, service=Service(ChromeDriverManager().install())
-    )
-    driver.maximize_window()
-except Exception as e:
-    print(f"Error initializing Chrome driver: {e}")
-    csv_file.close()
-    exit(1)
-
-try:
-    # Navigate to LinkedIn
-    driver.get("https://www.linkedin.com/login?lipi=urn%3Ali%3Apage%3Adeeplink_linkedinmobileapp%3BCe3UA3pGRFeaE6JvJSnLow%3D%3D&destType=web&fromSignIn=true&trk=guest_homepage-basic_nav-header-signin")
-    
-    wait = WebDriverWait(driver, 20)
-    
-    print(f"Current URL: {driver.current_url}")
-    driver.save_screenshot("login_page.png")
-    
-    # Login process with better error handling
-    try:
-        username_field = wait.until(
-            EC.presence_of_element_located((By.ID, "username"))
-        )
-        username_field.send_keys(linkedin_username)
-        
-        password_field = driver.find_element(By.ID, "password")
-        password_field.send_keys(linkedin_password)
-        
-        sign_in_button = driver.find_element(By.XPATH, "//button[@type='submit']")
-        sign_in_button.click()
-        
-        driver.save_screenshot("after_login.png")
-        # Wait for login to complete
-        sleep(25)
-
-        print(driver.current_url, driver)
-        
-        # Check if verification is needed
-        if "checkpoint" in driver.current_url or "challenge" in driver.current_url:
-            print("LinkedIn requires verification. Please complete it manually.")
-            driver.save_screenshot("requires_verification.png")
-            input("Press Enter after completing verification...")
-            driver.save_screenshot("after_verification.png")
-
-        
-    except TimeoutException:
-        print("Login page elements not found. Saving screenshot for debugging.")
-        driver.save_screenshot("login_error.png")
-        raise
-    
-    # Navigate to post
-    print(f"Navigating to post: {post_url}")
-    driver.get(post_url)
-    sleep(20)  # Wait for page to load
-    
-    # Load comments
-    print("Loading comments:", end=" ", flush=True)
-    driver.save_screenshot("post_page.png")
-
-    load_more("comments", Config["load_comments_class"], driver)
-    
-    if args.show_replies:
-        print("\nLoading replies:", end=" ", flush=True)
-        driver.save_screenshot("post_page_replies.png")
-        load_more("replies", Config["load_replies_class"], driver)
-    
-    print("\nExtracting data...")
-    
-    # Save page source if requested
-    if args.save_page_source:
-        with open("page_source.html", "w", encoding='utf-8') as f:
-            f.write(driver.page_source)
-        print("Page source saved to page_source.html")
-    
-    # Parse with BeautifulSoup
-    bs_obj = BSoup(driver.page_source, "html.parser")
-    
-    # Extract data with error handling
-    comments = bs_obj.find_all("span", {"class": Config["comment_class"]})
-    comments = [comment.get_text(strip=True) for comment in comments]
-    
-    headlines = bs_obj.find_all("span", {"class": Config["headline_class"]})
-    headlines = [headline.get_text(strip=True) for headline in headlines]
-    
-    emails = extract_emails(comments)
-    
-    names = bs_obj.find_all("span", {"class": Config["name_class"]})
-    names = [name.get_text(strip=True).split("\n")[0] for name in names]
-    
-    BASE_URL = "https://www.linkedin.com/"
-    
-    profile_links_set = bs_obj.find_all("a", {"class": Config["avatar_class"]})
-    profile_links = [
-        urljoin(BASE_URL, profile_link.get("href", "")) 
-        for profile_link in profile_links_set
-    ]
-    
-    avatars = []
-    for a in profile_links_set:
-        img_link = ""
+    # Click "load more comments" button
+    while True:
         try:
-            img_tag = a.find("img")
-            if img_tag:
-                img_link = img_tag.get("src", "")
-        except Exception as e:
-            print(f"Error extracting avatar: {e}")
+            load_more_btn = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "button.comments-comments-list__load-more-comments-button--cr")))
+            driver.execute_script("arguments[0].scrollIntoView(true);", load_more_btn)
+            load_more_btn.click()
+            print(".", end="", flush=True)
+            sleep(1.5)
+        except TimeoutException:
+            break
+    print(" Done!")
+
+    if show_replies:
+        print("Loading replies: ", end="", flush=True)
         
-        avatars.append(img_link)
-    
-    # Ensure all lists have the same length
-    max_len = max(len(names), len(profile_links), len(avatars), len(headlines), len(comments))
-    
-    # Pad lists to same length
-    names += [""] * (max_len - len(names))
-    profile_links += [""] * (max_len - len(profile_links))
-    avatars += [""] * (max_len - len(avatars))
-    headlines += [""] * (max_len - len(headlines))
-    emails += [""] * (max_len - len(emails))
-    comments += [""] * (max_len - len(comments))
-    
-    print(f"Found {len(names)} comments")
-    
-    # Write data to CSV
-    write_data2csv(writer, names, profile_links, avatars, headlines, emails, comments)
-    
-    # Download avatars if requested
-    if args.download_avatars:
-        download_avatars(avatars, names, Config["dirname"] + unique_suffix)
-    
-    end = time()
-    time_spent = end - start
-    
-    print(
-        "%d linkedin post comments scraped in: %.2f minutes (%d seconds)"
-        % (len(names), ((time_spent) / 60), (time_spent))
-    )
+        # Click "see previous replies" buttons
+        while True:
+            try:
+                previous_replies_btn = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, 'button.comments-replies-list__replies-button')))
+                driver.execute_script("arguments[0].scrollIntoView(true);", previous_replies_btn)
+                previous_replies_btn.click()
+                print(".", end="", flush=True)
+                sleep(1)
+            except TimeoutException:
+                break
+        
+        # Click on "X replies" to expand them
+        while True:
+            try:
+                # Use a more specific selector
+                reply_buttons = driver.find_elements(By.CSS_SELECTOR, 'button.comments-comment-social-bar__reply-action-button--cr')
+                if not reply_buttons:
+                    break
+                
+                clicked = False
+                # Click them starting from the last to avoid stale elements
+                for i in range(len(reply_buttons) - 1, -1, -1):
+                    btn = reply_buttons[i]
+                    if btn.is_displayed() and "repl" in btn.text: # Check for "reply" or "replies"
+                        driver.execute_script("arguments[0].scrollIntoView(true);", btn)
+                        btn.click()
+                        print(".", end="", flush=True)
+                        sleep(0.5)
+                        clicked = True
 
-except Exception as e:
-    print(f"Error during scraping: {e}")
-    driver.save_screenshot("error_screenshot.png")
-    if args.save_page_source:
-        with open("error_page_source.html", "w", encoding='utf-8') as f:
-            f.write(driver.page_source)
-    raise
+                if not clicked:
+                    break # No more reply buttons were clicked in this pass
+                
+                sleep(2) # wait for replies to load
+            except Exception:
+                break
+        
+        print(" Done!")
 
-finally:
-    # Cleanup
-    driver.quit()
-    csv_file.close()
-    print("Browser closed and files saved.")
+def extract_data_from_html(html_content):
+    """Extract comment data from HTML using BeautifulSoup"""
+    soup = BSoup(html_content, "html.parser")
+    
+    data = []
+    email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
+    
+    comment_articles = soup.find_all("article", class_="comments-comment-entity")
+    
+    for article in comment_articles:
+        name, headline, profile_link, avatar, comment_text = "", "", "", "", ""
+        emails = []
+
+        name_elem = article.select_one("span.comments-comment-meta__description-title")
+        if name_elem:
+            name = name_elem.get_text(strip=True)
+
+        headline_elem = article.select_one("div.comments-comment-meta__description-subtitle")
+        if headline_elem:
+            headline = headline_elem.get_text(strip=True)
+            
+        profile_link_elem = article.select_one("a.comments-comment-meta__image-link")
+        if profile_link_elem:
+            profile_link = urljoin("https://www.linkedin.com/", profile_link_elem.get("href", ""))
+            avatar_elem = profile_link_elem.find("img")
+            if avatar_elem:
+                avatar = avatar_elem.get("src", "")
+
+        comment_elem = article.select_one("span.comments-comment-item__main-content")
+        if comment_elem:
+            comment_text = comment_elem.get_text(strip=True)
+            emails = re.findall(email_pattern, comment_text)
+
+        if name or comment_text:
+            data.append({
+                "Name": name,
+                "Profile Link": profile_link,
+                "Profile Picture": avatar,
+                "Headline": headline,
+                "Email": ", ".join(emails),
+                "Comment": comment_text
+            })
+            
+    return data
+
+def write_to_csv(data, filename):
+    """Write extracted data to CSV"""
+    if not data:
+        print("No data to write.")
+        return
+
+    with open(filename, "w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=data[0].keys())
+        writer.writeheader()
+        writer.writerows(data)
+    
+    print(f"✓ Data written to {filename}")
+
+def main():
+    parser = argparse.ArgumentParser(description="Linkedin Scraping.")
+    parser.add_argument("--headless", action="store_true", help="Go headless browsing")
+    parser.add_argument("--show-replies", action="store_true", help="Load all replies to comments")
+    parser.add_argument("--download-pfp", dest="download_avatars", action="store_true", help="Download profile pictures of commentors")
+    parser.add_argument("--save-page-source", action="store_true", help="Save page source for debugging")
+    args = parser.parse_args()
+
+    now = datetime.now()
+    unique_suffix = now.strftime("-%m-%d-%Y--%H-%M")
+
+    try:
+        with open("config.json") as f:
+            config = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        print(f"Error with config.json: {e}")
+        exit(1)
+
+    post_url = check_post_url(config.get("post_url"))
+    output_file = config.get("filename", "linkedin_comments") + unique_suffix + ".csv"
+    
+    linkedin_username, linkedin_password = login_details()
+    
+    start = time()
+    print("Initiating the process....")
+
+    options = uc.ChromeOptions()
+    if args.headless:
+        options.add_argument("--headless=new")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    options.add_experimental_option('useAutomationExtension', False)
+
+    try:
+        driver = webdriver.Chrome(options=options, service=Service(ChromeDriverManager().install()))
+        driver.maximize_window()
+    except Exception as e:
+        print(f"Error initializing Chrome driver: {e}")
+        exit(1)
+
+    try:
+        driver.get("https://www.linkedin.com/login")
+        wait = WebDriverWait(driver, 20)
+        
+        username_field = wait.until(EC.presence_of_element_located((By.ID, "username")))
+        username_field.send_keys(linkedin_username)
+        driver.find_element(By.ID, "password").send_keys(linkedin_password)
+        driver.find_element(By.XPATH, "//button[@type='submit']").click()
+        
+        sleep(15)
+        
+        if "checkpoint" in driver.current_url or "challenge" in driver.current_url:
+            print("Verification required. Please complete it manually.")
+            input("Press Enter after completing verification...")
+
+        print(f"Navigating to post: {post_url}")
+        driver.get(post_url)
+        sleep(10)
+
+        load_all_comments(driver, args.show_replies)
+        
+        if args.save_page_source:
+            with open("page_source.html", "w", encoding='utf-8') as f:
+                f.write(driver.page_source)
+            print("Page source saved.")
+
+        print("\nExtracting data...")
+        data = extract_data_from_html(driver.page_source)
+        
+        print(f"Found {len(data)} comments")
+        write_to_csv(data, output_file)
+        
+        if args.download_avatars:
+            avatars = [item['Profile Picture'] for item in data if item.get('Profile Picture')]
+            names = [item['Name'] for item in data if item.get('Profile Picture')]
+            download_avatars(avatars, names, config.get("dirname", "avatars") + unique_suffix)
+
+        time_spent = time() - start
+        print(f"{len(data)} comments scraped in: {time_spent / 60:.2f} minutes ({time_spent:.0f} seconds)")
+
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        driver.save_screenshot("error_screenshot.png")
+        raise
+    finally:
+        driver.quit()
+        print("Browser closed.")
+
+if __name__ == "__main__":
+    main()

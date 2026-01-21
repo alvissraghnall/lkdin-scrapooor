@@ -78,14 +78,13 @@ async def login_with_credentials(page, username, password):
         return False
 
 async def load_all_comments(page, show_replies=False):
-    """Click 'load more comments' buttons until all loaded"""
+    """Click 'load more' and 'show replies' buttons until all are loaded."""
     print("Loading comments: ", end="", flush=True)
     
+    # Click "load more comments" button
     while True:
         try:
-            # Try to find and click "load more comments" button
-            load_more_btn = page.locator('button:has-text("Show more comments"), button:has-text("Load more comments")').first
-            
+            load_more_btn = page.locator('button.comments-comments-list__load-more-comments-button--cr').first
             if await load_more_btn.is_visible(timeout=2000):
                 await load_more_btn.scroll_into_view_if_needed()
                 await load_more_btn.click()
@@ -93,89 +92,113 @@ async def load_all_comments(page, show_replies=False):
                 await page.wait_for_timeout(1500)
             else:
                 break
-        except:
+        except Exception:
             break
-    
     print(" Done!")
-    
+
     if show_replies:
         print("Loading replies: ", end="", flush=True)
-        # Click all "show more replies" buttons
-        reply_buttons = page.locator('button:has-text("replies"), button:has-text("reply")')
-        count = await reply_buttons.count()
         
-        for i in range(count):
+        # Click "see previous replies" buttons
+        while True:
             try:
-                btn = reply_buttons.nth(i)
-                if await btn.is_visible():
-                    await btn.scroll_into_view_if_needed()
-                    await btn.click()
+                previous_replies_btn = page.locator('button.comments-replies-list__replies-button:has-text("See previous replies")').first
+                if await previous_replies_btn.is_visible(timeout=2000):
+                    await previous_replies_btn.scroll_into_view_if_needed()
+                    await previous_replies_btn.click()
                     print(".", end="", flush=True)
-                    await page.wait_for_timeout(500)
-            except:
-                continue
+                    await page.wait_for_timeout(1000)
+                else:
+                    break
+            except Exception:
+                break
+
+        # Click on "X replies" to expand them
+        while True:
+            try:
+                # Find buttons that contain the text "replies" but not "previous"
+                reply_buttons = page.locator('button.comments-comment-social-bar__reply-action-button--cr:has-text("replies")')
+                count = await reply_buttons.count()
+                if count == 0:
+                    break
+
+                # Click them starting from the last to avoid stale elements
+                for i in range(count - 1, -1, -1):
+                    btn = reply_buttons.nth(i)
+                    if await btn.is_visible():
+                        await btn.scroll_into_view_if_needed()
+                        await btn.click()
+                        print(".", end="", flush=True)
+                        await page.wait_for_timeout(500)
+                
+                # After clicking, the buttons might be gone, so we re-check
+                await page.wait_for_timeout(2000) # wait for replies to load
+                if await reply_buttons.count() == 0:
+                    break
+
+            except Exception:
+                break
         
         print(" Done!")
+
 
 async def extract_data_from_html(html_content, config):
     """Extract comment data from HTML using BeautifulSoup"""
     soup = BSoup(html_content, "html.parser")
     
-    # Extract comments
-    comment_elements = soup.find_all("span", {"class": config.get("comment_class", "comments-comment-item__main-content")})
-    comments = [elem.get_text(strip=True) for elem in comment_elements]
-    
-    # Extract names
-    name_elements = soup.find_all("span", {"class": config.get("name_class", "comments-post-meta__name-text")})
-    names = [elem.get_text(strip=True).split("\n")[0] for elem in name_elements]
-    
-    # Extract headlines
-    headline_elements = soup.find_all("span", {"class": config.get("headline_class", "comments-post-meta__headline")})
-    headlines = [elem.get_text(strip=True) for elem in headline_elements]
-    
-    # Extract profile links and avatars
-    BASE_URL = "https://www.linkedin.com/"
-    profile_link_elements = soup.find_all("a", {"class": config.get("avatar_class", "comments-post-meta__profile-link")})
-    
-    profile_links = []
-    avatars = []
-    
-    for elem in profile_link_elements:
-        # Get profile URL
-        href = elem.get("href", "")
-        profile_links.append(urljoin(BASE_URL, href))
-        
-        # Get avatar image
-        img_tag = elem.find("img")
-        avatar_url = img_tag.get("src", "") if img_tag else ""
-        avatars.append(avatar_url)
-    
-    # Extract emails from comments (if any)
-    import re
+    data = []
     email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
-    emails = []
-    for comment in comments:
-        found_emails = re.findall(email_pattern, comment)
-        emails.append(found_emails[0] if found_emails else "")
     
-    # Normalize lengths
-    max_len = max(len(names), len(profile_links), len(avatars), len(headlines), len(comments))
+    # Find all comment articles
+    comment_articles = soup.find_all("article", class_="comments-comment-entity")
     
-    names += [""] * (max_len - len(names))
-    profile_links += [""] * (max_len - len(profile_links))
-    avatars += [""] * (max_len - len(avatars))
-    headlines += [""] * (max_len - len(headlines))
-    emails += [""] * (max_len - len(emails))
-    comments += [""] * (max_len - len(comments))
-    
-    return {
-        "names": names,
-        "profile_links": profile_links,
-        "avatars": avatars,
-        "headlines": headlines,
-        "emails": emails,
-        "comments": comments
-    }
+    for article in comment_articles:
+        name = ""
+        headline = ""
+        profile_link = ""
+        avatar = ""
+        comment_text = ""
+        emails = []
+
+        # Extract Name
+        name_elem = article.select_one("span.comments-comment-meta__description-title")
+        if name_elem:
+            name = name_elem.get_text(strip=True)
+
+        # Extract Headline
+        headline_elem = article.select_one("div.comments-comment-meta__description-subtitle")
+        if headline_elem:
+            headline = headline_elem.get_text(strip=True)
+            
+        # Extract Profile Link and Avatar
+        profile_link_elem = article.select_one("a.comments-comment-meta__image-link")
+        if profile_link_elem:
+            profile_link = urljoin("https://www.linkedin.com/", profile_link_elem.get("href", ""))
+            avatar_elem = profile_link_elem.find("img")
+            if avatar_elem:
+                avatar = avatar_elem.get("src", "")
+
+        # Extract Comment Text
+        comment_elem = article.select_one("span.comments-comment-item__main-content")
+        if comment_elem:
+            comment_text = comment_elem.get_text(strip=True)
+            
+        # Extract Emails from comment
+        if comment_text:
+            emails = re.findall(email_pattern, comment_text)
+
+        # Only add if we have at least a name or a comment
+        if name or comment_text:
+            data.append({
+                "name": name,
+                "profile_link": profile_link,
+                "avatar": avatar,
+                "headline": headline,
+                "email": ", ".join(emails), # Join multiple emails found in one comment
+                "comment": comment_text
+            })
+            
+    return data
 
 async def scrape_post_comments(post_url, config, args):
     """Main scraping function"""
@@ -255,19 +278,14 @@ async def scrape_post_comments(post_url, config, args):
 
 def write_to_csv(data, filename):
     """Write extracted data to CSV"""
+    if not data:
+        print("No data to write.")
+        return
+
     with open(filename, "w", encoding="utf-8", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(["Name", "Profile Link", "Profile Picture", "Headline", "Email", "Comment"])
-        
-        for i in range(len(data["names"])):
-            writer.writerow([
-                data["names"][i],
-                data["profile_links"][i],
-                data["avatars"][i],
-                data["headlines"][i],
-                data["emails"][i],
-                data["comments"][i]
-            ])
+        writer = csv.DictWriter(f, fieldnames=data[0].keys())
+        writer.writeheader()
+        writer.writerows(data)
     
     print(f"✓ Data written to {filename}")
 
@@ -307,7 +325,7 @@ async def main():
     data = await scrape_post_comments(post_url, config, args)
     
     if data:
-        print(f"Found {len(data['names'])} comments")
+        print(f"Found {len(data)} comments")
         write_to_csv(data, output_file)
         print(f"\n✓ Scraping complete!")
     else:
