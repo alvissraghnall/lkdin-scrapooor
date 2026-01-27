@@ -13,7 +13,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, NoSuchElementException
+from selenium.common.exceptions import TimeoutException, NoSuchElementException, WebDriverException
 from bs4 import BeautifulSoup as BSoup
 
 import undetected_chromedriver as uc
@@ -26,7 +26,7 @@ from utils import (
 
 def load_all_comments(driver, show_replies=False):
     """Click 'load more' and 'show replies' buttons until all are loaded."""
-    wait = WebDriverWait(driver, 10)
+    wait = WebDriverWait(driver, 14)
     print("Loading comments: ", end="", flush=True)
 
     # Click "load more comments" button
@@ -52,10 +52,10 @@ def load_all_comments(driver, show_replies=False):
                 break
                 
             driver.execute_script("arguments[0].scrollIntoView(true);", load_more_btn)
-            sleep(12)  # Small delay before clicking
+            sleep(6)  # Small delay before clicking
             load_more_btn.click()
             print(".", end="", flush=True)
-            sleep(20)  # Wait for comments to load
+            sleep(12)  # Wait for comments to load
         except TimeoutException:
             break
     print(" Done!")
@@ -93,7 +93,7 @@ def load_all_comments(driver, show_replies=False):
                     break  # No more reply buttons were clicked in this pass
                 
                 attempts += 1
-                sleep(2)  # Wait for replies to load
+                sleep(6) # Wait for replies to load
             except Exception as e:
                 break
         
@@ -197,31 +197,50 @@ def main():
     start = time()
     print("Initiating the process....")
 
-    options = uc.ChromeOptions()
-    if args.headless:
-        options.add_argument("--headless=new")
-        options.add_argument("--no-sandbox")
-        options.add_argument("--disable-dev-shm-usage")
-    
-    # Add these options to better mimic human behavior
-    options.add_argument("--disable-blink-features=AutomationControlled")
-    # options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    # options.add_experimental_option('useAutomationExtension', False)
-    
-    # Set user agent to a common browser
-    options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
-
+    driver = None
     try:
-        driver = uc.Chrome(options=options, service=Service(ChromeDriverManager().install()))  # Let undetected_chromedriver handle the version
-        driver.maximize_window()
+        # Configure Chrome options
+        options = uc.ChromeOptions()
         
-        # Remove navigator.webdriver property
-        driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-    except Exception as e:
-        print(f"Error initializing Chrome driver: {e}")
-        exit(1)
-
-    try:
+        if args.headless:
+            options.add_argument("--headless=new")
+            options.add_argument("--no-sandbox")
+            options.add_argument("--disable-dev-shm-usage")
+        
+        # Add these options to better mimic human behavior
+        options.add_argument("--disable-blink-features=AutomationControlled")
+        options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        options.add_experimental_option('useAutomationExtension', False)
+        
+        # Set user agent to a common browser
+        options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+        
+        # Add timeout and connection settings
+        options.add_argument("--timeout=300")
+        options.add_argument("--dns-prefetch-disable")
+        
+        # Try to initialize the driver with multiple attempts
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            try:
+                print(f"Initializing Chrome driver (attempt {attempt + 1}/{max_attempts})...")
+                driver = uc.Chrome(options=options, version_main=None)
+                driver.maximize_window()
+                
+                # Remove navigator.webdriver property
+                driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+                
+                # Set page load timeout
+                driver.set_page_load_timeout(60)
+                
+                print("Chrome driver initialized successfully!")
+                break
+            except WebDriverException as e:
+                print(f"Attempt {attempt + 1} failed: {str(e)}")
+                if attempt == max_attempts - 1:
+                    raise
+                sleep(8)  # Wait before retrying
+        
         print("Logging into LinkedIn...")
         driver.get("https://www.linkedin.com/login")
         wait = WebDriverWait(driver, 20)
@@ -232,7 +251,7 @@ def main():
         driver.find_element(By.XPATH, "//button[@type='submit']").click()
         
         # Wait for login to complete
-        sleep(8)
+        sleep(10)
         
         # Check if verification is required
         if "checkpoint" in driver.current_url or "challenge" in driver.current_url:
@@ -243,11 +262,11 @@ def main():
         driver.get(post_url)
         
         # Wait for the page to load
-        sleep(20)
+        sleep(10)
         
         # Scroll down to trigger comment loading
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight/2);")
-        sleep(18)
+        sleep(3)
         
         load_all_comments(driver, args.show_replies)
         
@@ -272,10 +291,18 @@ def main():
 
     except Exception as e:
         print(f"An error occurred: {e}")
-        driver.save_screenshot("error_screenshot.png")
+        if driver:
+            try:
+                driver.save_screenshot("error_screenshot.png")
+            except:
+                pass
         raise
     finally:
-        driver.quit()
+        if driver:
+            try:
+                driver.quit()
+            except:
+                pass
         print("Browser closed.")
 
 if __name__ == "__main__":
