@@ -13,7 +13,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, NoSuchElementException, WebDriverException
+from selenium.common.exceptions import TimeoutException, NoSuchElementException, WebDriverException, StaleElementReferenceException
 from bs4 import BeautifulSoup as BSoup
 
 import undetected_chromedriver as uc
@@ -26,7 +26,7 @@ from utils import (
 
 def load_all_comments(driver, show_replies=False):
     """Click 'load more' and 'show replies' buttons until all are loaded."""
-    wait = WebDriverWait(driver, 14)
+    wait = WebDriverWait(driver, 10)
     print("Loading comments: ", end="", flush=True)
 
     # Click "load more comments" button
@@ -51,12 +51,14 @@ def load_all_comments(driver, show_replies=False):
             if not load_more_btn:
                 break
                 
+            # Use JavaScript to click the button to avoid stale element issues
             driver.execute_script("arguments[0].scrollIntoView(true);", load_more_btn)
-            sleep(6)  # Small delay before clicking
-            load_more_btn.click()
+            sleep(5)  # Small delay before clicking
+            driver.execute_script("arguments[0].click();", load_more_btn)
             print(".", end="", flush=True)
-            sleep(12)  # Wait for comments to load
-        except TimeoutException:
+            sleep(11)  # Wait for comments to load
+        except (TimeoutException, StaleElementReferenceException) as e:
+            print(f"\nNo more 'load more' buttons found or encountered stale element: {type(e).__name__}")
             break
     print(" Done!")
 
@@ -80,21 +82,22 @@ def load_all_comments(driver, show_replies=False):
                 for indicator in reply_indicators:
                     try:
                         if indicator.is_displayed() and "repl" in indicator.text.lower():
-                            # Click on the replies count to expand
+                            # Use JavaScript to click to avoid stale element issues
                             driver.execute_script("arguments[0].scrollIntoView(true);", indicator)
-                            indicator.click()
+                            driver.execute_script("arguments[0].click();", indicator)
                             print(".", end="", flush=True)
-                            sleep(1)
+                            sleep(7)
                             clicked = True
-                    except Exception as e:
+                    except (StaleElementReferenceException, Exception) as e:
                         continue
                 
                 if not clicked:
                     break  # No more reply buttons were clicked in this pass
                 
                 attempts += 1
-                sleep(6) # Wait for replies to load
+                sleep(12)  # Wait for replies to load
             except Exception as e:
+                print(f"\nError loading replies: {type(e).__name__}: {str(e)}")
                 break
         
         print(" Done!")
@@ -224,7 +227,8 @@ def main():
         for attempt in range(max_attempts):
             try:
                 print(f"Initializing Chrome driver (attempt {attempt + 1}/{max_attempts})...")
-                driver = uc.Chrome(options=options, service=Service(ChromeDriverManager().install()))
+                service = Service(ChromeDriverManager().install())
+                driver = webdriver.Chrome(service=service, options=options)
                 driver.maximize_window()
                 
                 # Remove navigator.webdriver property
@@ -262,13 +266,18 @@ def main():
         driver.get(post_url)
         
         # Wait for the page to load
-        sleep(10)
+        sleep(16)
         
         # Scroll down to trigger comment loading
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight/2);")
-        sleep(3)
+        sleep(10)
         
-        load_all_comments(driver, args.show_replies)
+        # Try to load comments with error handling
+        try:
+            load_all_comments(driver, args.show_replies)
+        except Exception as e:
+            print(f"\nError loading comments: {type(e).__name__}: {str(e)}")
+            print("Continuing with available comments...")
         
         if args.save_page_source:
             with open("page_source.html", "w", encoding='utf-8') as f:
@@ -300,6 +309,9 @@ def main():
     finally:
         if driver:
             try:
+                # Close all windows first
+                driver.close()
+                # Then quit the driver
                 driver.quit()
             except:
                 pass
