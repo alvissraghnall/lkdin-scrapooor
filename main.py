@@ -174,6 +174,24 @@ def write_to_csv(data, filename):
     
     print(f"✓ Data written to {filename}")
 
+# Add this function to handle connection issues
+def handle_connection_timeout(driver, max_retries=3):
+    """Handle connection timeout issues with retry logic"""
+    for attempt in range(max_retries):
+        try:
+            # Check if driver is still responsive
+            driver.current_url
+            return True
+        except Exception:
+            if attempt < max_retries - 1:
+                print(f"Connection issue detected, retrying... (attempt {attempt + 1})")
+                sleep(5)
+            else:
+                print("Max retries reached, connection failed")
+                return False
+    return False
+
+
 def main():
     parser = argparse.ArgumentParser(description="Linkedin Scraping.")
     parser.add_argument("--headless", action="store_true", help="Go headless browsing")
@@ -209,6 +227,9 @@ def main():
             options.add_argument("--headless=new")
             options.add_argument("--no-sandbox")
             options.add_argument("--disable-dev-shm-usage")
+            options.add_argument("--disable-images")
+            options.add_argument("--disable-extensions")
+            options.add_argument("--disable-plugins")
         
         # Add these options to better mimic human behavior
         options.add_argument("--disable-blink-features=AutomationControlled")
@@ -234,9 +255,8 @@ def main():
                 # Remove navigator.webdriver property
                 driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
                 
-                # Set page load timeout
-                driver.set_page_load_timeout(60)
                 
+                driver.set_page_load_timeout(120)                  
                 print("Chrome driver initialized successfully!")
                 break
             except WebDriverException as e:
@@ -245,14 +265,51 @@ def main():
                     raise
                 sleep(8)  # Wait before retrying
         
+        # Use this function before critical operations
+        if not handle_connection_timeout(driver):
+            raise Exception("Failed to establish stable connection to browser")
+    
         print("Logging into LinkedIn...")
         driver.get("https://www.linkedin.com/login")
-        wait = WebDriverWait(driver, 20)
+        wait = WebDriverWait(driver, 38)
+
+        try:
+            username_field = wait.until(EC.presence_of_element_located((By.ID, "username")))
+            username_field.send_keys(linkedin_username)
+    
+            password_field = wait.until(EC.presence_of_element_located((By.ID, "password")))
+            password_field.send_keys(linkedin_password)
+    
+            # Try multiple selectors for the submit button
+            submit_button = None
+            submit_selectors = [
+                "//button[@type='submit']",
+                "//button[contains(@class, 'sign-in-form__submit-button')]",
+                "//button[contains(text(), 'Sign in')]"
+            ]
+    
+            for selector in submit_selectors:
+                try:
+                    submit_button = wait.until(EC.element_to_be_clickable((By.XPATH, selector)))
+                    break
+                except TimeoutException:
+                    continue
+    
+            if submit_button:
+                # Use JavaScript to click to avoid renderer timeout
+                driver.execute_script("arguments[0].click();", submit_button)
+            else:
+                print("Could not find submit button")
         
-        username_field = wait.until(EC.presence_of_element_located((By.ID, "username")))
-        username_field.send_keys(linkedin_username)
-        driver.find_element(By.ID, "password").send_keys(linkedin_password)
-        driver.find_element(By.XPATH, "//button[@type='submit']").click()
+        except TimeoutException:
+            print("Login elements not found within timeout period")
+            # Take screenshot for debugging
+            driver.save_screenshot("login_error.png")
+        
+        # username_field = wait.until(EC.presence_of_element_located((By.ID, "username")))
+        # username_field.send_keys(linkedin_username)
+        # driver.find_element(By.ID, "password").send_keys(linkedin_password)
+        # driver.find_element(By.XPATH, "//button[@type='submit']").click()
         
         # Wait for login to complete
         sleep(10)
@@ -261,6 +318,13 @@ def main():
         if "checkpoint" in driver.current_url or "challenge" in driver.current_url:
             print("Verification required. Please complete it manually.")
             input("Press Enter after completing verification...")
+
+        try:
+            wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".global-nav__primary-link")))
+            print("Login successful!")
+        except TimeoutException:
+            print("Login may have failed. Current URL:", driver.current_url)
+            driver.save_screenshot("login_check.png")
 
         print(f"Navigating to post: {post_url}")
         driver.get(post_url)
